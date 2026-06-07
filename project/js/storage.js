@@ -153,7 +153,11 @@ class StorageManager {
    * @returns {Array}
    */
   getCompletedFiles() {
-    return this.getItem("completedFiles", []);
+    const data = this.getItem("completedFiles", []);
+    if (!Array.isArray(data)) {
+      return [];
+    }
+    return Array.from(new Set(data));
   }
 
   /**

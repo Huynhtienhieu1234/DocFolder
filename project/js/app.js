@@ -7,6 +7,10 @@ class PDFManagerApp {
     this.isInitialized = false;
     this.currentView = "files";
     this.filteredFiles = [];
+    this.currentFiles = [];
+    this.currentContainerId = "filesList";
+    this.currentPage = 1;
+    this.itemsPerPage = storage.getViewPreferences().itemsPerPage || 20;
   }
 
   /**
@@ -122,6 +126,9 @@ class PDFManagerApp {
     document
       .getElementById("favoritesOnlyCheck")
       ?.addEventListener("change", (e) => this.handleFavoritesFilter(e));
+    document
+      .getElementById("reviewedOnlyCheck")
+      ?.addEventListener("change", (e) => this.handleReviewedFilter(e));
 
     // Export CSV
     document
@@ -169,6 +176,18 @@ class PDFManagerApp {
     document
       .getElementById("favoritesTab")
       ?.addEventListener("click", () => this.switchToFavoritesTab());
+    document
+      .getElementById("reviewedTab")
+      ?.addEventListener("click", () => this.switchToReviewedTab());
+    document
+      .getElementById("paginationPrevBtn")
+      ?.addEventListener("click", () => this.changePage(this.currentPage - 1));
+    document
+      .getElementById("paginationNextBtn")
+      ?.addEventListener("click", () => this.changePage(this.currentPage + 1));
+    document
+      .getElementById("itemsPerPageSelect")
+      ?.addEventListener("change", (e) => this.handleItemsPerPageChange(e));
   }
 
   /**
@@ -333,7 +352,7 @@ class PDFManagerApp {
         : explorer.getSubfolderFiles(folderPath);
 
     this.filteredFiles = files;
-    this.renderFilesList(files);
+    this.renderFileCollection(files, "filesList");
   }
 
   /**
@@ -364,6 +383,10 @@ class PDFManagerApp {
       files = files.filter((f) => storage.isFavorite(f.path));
     }
 
+    if (document.getElementById("reviewedOnlyCheck")?.checked) {
+      files = files.filter((f) => storage.isCompletedFile(f.path));
+    }
+
     // Apply filter
     const filterSelect = document.getElementById("filterSelect");
     const filterValue = filterSelect?.value || "";
@@ -374,25 +397,46 @@ class PDFManagerApp {
     const sortValue = sortSelect?.value || "name-asc";
     files = explorer.sortFiles(files, sortValue);
 
-    this.renderFilesList(files);
+    this.renderFileCollection(files, "filesList");
   }
 
   /**
    * Render files list/grid
    * @param {Array} files
    */
-  renderFilesList(files) {
-    const filesList = document.getElementById("filesList");
+  renderFilesList(files, containerId = "filesList") {
+    const filesList = document.getElementById(containerId);
     if (!filesList) return;
+
+    const noDataConfig = {
+      filesList: {
+        icon: "inbox",
+        message: "Không tìm thấy file PDF",
+      },
+      favoritesList: {
+        icon: "star",
+        message: "Không có file yêu thích",
+      },
+      reviewedList: {
+        icon: "eye",
+        message: "Không có file đã xem",
+      },
+    };
+
+    const noData = noDataConfig[containerId] || noDataConfig.filesList;
 
     if (files.length === 0) {
       filesList.innerHTML = `
                 <div class="text-muted text-center py-5">
-                    <i class="bi bi-inbox" style="font-size: 3rem;"></i>
-                    <p class="mt-3">Không tìm thấy file PDF</p>
+                    <i class="bi bi-${noData.icon}" style="font-size: 3rem"></i>
+                    <p class="mt-3">${noData.message}</p>
                 </div>
             `;
-      document.getElementById("filesCount").textContent = "0";
+      if (containerId === "filesList") {
+        document.getElementById("filesCount").textContent =
+          this.currentFiles.length || 0;
+      }
+      this.updatePaginationControls();
       return;
     }
 
@@ -412,12 +456,10 @@ class PDFManagerApp {
                              onclick="event.stopPropagation(); app.toggleFavorite('${file.path.replace(/'/g, "\\'")}', this)">
                             <i class="bi bi-star${isFav ? "-fill" : ""}"></i>
                         </div>
-                        <button class="completed-btn ${isCompleted ? "active" : ""}"
-                                type="button"
-                                title="${isCompleted ? "Bỏ đánh dấu đã xem xong" : "Đánh dấu đã xem xong"}"
+                        <button class="completed-btn ${isCompleted ? "active" : ""}" 
                                 onclick="event.stopPropagation(); app.toggleCompleted('${file.path.replace(/'/g, "\\'")}', this)">
-                            <i class="bi bi-check2-circle"></i>
-                            <span>${isCompleted ? "Đã xem" : "Xem xong"}</span>
+                            <i class="bi bi-eye${isCompleted ? "-fill" : ""}"></i>
+                            <span>${isCompleted ? "Đã xem" : "Chưa xem"}</span>
                         </button>
                         ${!thumbnail ? '<div class="file-thumbnail-placeholder"><i class="bi bi-file-pdf"></i></div>' : ""}
                         <div class="file-badge">${file.pageCount || "?"} trang</div>
@@ -438,9 +480,11 @@ class PDFManagerApp {
       })
       .join("");
 
-    document.getElementById("filesCount").textContent = files.length;
+    if (containerId === "filesList") {
+      document.getElementById("filesCount").textContent =
+        this.currentFiles.length || files.length;
+    }
 
-    // Attach card click listeners
     filesList.querySelectorAll(".file-card").forEach((card) => {
       card.addEventListener("click", async (e) => {
         const path = card.getAttribute("data-path");
@@ -448,8 +492,8 @@ class PDFManagerApp {
       });
     });
 
-    // Lazy load thumbnails
     this.lazyLoadThumbnails(files);
+    this.updatePaginationControls();
   }
 
   /**
@@ -503,9 +547,13 @@ class PDFManagerApp {
       // Get page count
       file.pageCount = pdfViewer.pdfDoc.numPages;
       storage.addRecentFile(filePath);
+      storage.addCompletedFile(filePath);
+      this.updateFavoritesCount();
 
       // Show viewer
-      document.getElementById("contentTabContent").classList.add("pdf-preview-open");
+      document
+        .getElementById("contentTabContent")
+        .classList.add("pdf-preview-open");
       document.getElementById("pdfViewerContainer").style.display = "flex";
     } catch (error) {
       console.error("Error opening PDF:", error);
@@ -518,7 +566,9 @@ class PDFManagerApp {
    */
   closePDFViewer() {
     pdfViewer.closePDF();
-    document.getElementById("contentTabContent").classList.remove("pdf-preview-open");
+    document
+      .getElementById("contentTabContent")
+      .classList.remove("pdf-preview-open");
     document.getElementById("pdfViewerContainer").style.display = "none";
     document.getElementById("contentTabContent").style.display = "block";
     document.getElementById("filesTab").click();
@@ -545,35 +595,15 @@ class PDFManagerApp {
   }
 
   /**
-   * Toggle completed/read mark
-   * @param {string} filePath
-   * @param {HTMLElement} btn
-   */
-  toggleCompleted(filePath, btn) {
-    const card = btn.closest(".file-card");
-
-    if (storage.isCompletedFile(filePath)) {
-      storage.removeCompletedFile(filePath);
-      btn.classList.remove("active");
-      btn.title = "Đánh dấu đã xem xong";
-      btn.innerHTML = '<i class="bi bi-check2-circle"></i><span>Xem xong</span>';
-      card?.classList.remove("completed");
-    } else {
-      storage.addCompletedFile(filePath);
-      btn.classList.add("active");
-      btn.title = "Bỏ đánh dấu đã xem xong";
-      btn.innerHTML = '<i class="bi bi-check2-circle"></i><span>Đã xem</span>';
-      card?.classList.add("completed");
-    }
-  }
-
-  /**
    * Update favorites count
    */
   updateFavoritesCount() {
     const favorites = storage.getFavorites();
+    const reviewed = storage.getCompletedFiles();
     document.getElementById("favoritesCount").textContent = favorites.length;
     document.getElementById("favCountInTab").textContent = favorites.length;
+    document.getElementById("reviewedCount").textContent = reviewed.length;
+    document.getElementById("statReviewedCount").textContent = reviewed.length;
   }
 
   /**
@@ -614,7 +644,192 @@ class PDFManagerApp {
       return;
     }
 
-    this.renderFilesList(favoriteFiles);
+    this.renderFileCollection(favoriteFiles, "favoritesList");
+  }
+
+  /**
+   * Switch to reviewed tab
+   */
+  switchToReviewedTab() {
+    this.currentView = "reviewed";
+    this.refreshReviewedList();
+  }
+
+  /**
+   * Refresh reviewed list
+   */
+  refreshReviewedList() {
+    const reviewedList = document.getElementById("reviewedList");
+    if (!reviewedList) return;
+
+    const completed = storage.getCompletedFiles();
+    const completedFiles = completed
+      .map((path) => explorer.findFile(path))
+      .filter((f) => f !== null);
+
+    if (completedFiles.length === 0) {
+      reviewedList.innerHTML = `
+                <div class="text-muted text-center py-5">
+                    <i class="bi bi-eye" style="font-size: 3rem;"></i>
+                    <p class="mt-3">Không có file đã xem</p>
+                </div>
+            `;
+      return;
+    }
+
+    this.renderFileCollection(completedFiles, "reviewedList");
+  }
+
+  /**
+   * Render collection with pagination
+   */
+  renderFileCollection(files, containerId = "filesList") {
+    this.currentFiles = files;
+    this.currentContainerId = containerId;
+    this.currentPage = 1;
+    // Ensure pagination controls are positioned under the active file list
+    this.movePaginationTo(containerId);
+    this.renderCurrentPage();
+  }
+
+  /**
+   * Move the global pagination container to be under the given list container
+   * @param {string} containerId
+   */
+  movePaginationTo(containerId) {
+    try {
+      const list = document.getElementById(containerId);
+      const pagination = document.getElementById("paginationContainer");
+      if (!list || !pagination) return;
+
+      // Place pagination right after the list element
+      const parent = list.parentElement;
+      if (parent) {
+        parent.appendChild(pagination);
+      }
+    } catch (err) {
+      console.warn("Failed to move pagination container:", err);
+    }
+  }
+
+  /**
+   * Render current pagination page
+   */
+  renderCurrentPage() {
+    const totalPages = Math.max(
+      1,
+      Math.ceil(this.currentFiles.length / this.itemsPerPage),
+    );
+    if (this.currentPage > totalPages) {
+      this.currentPage = totalPages;
+    }
+    if (this.currentPage < 1) {
+      this.currentPage = 1;
+    }
+
+    const pageItems = this.paginateFiles(this.currentFiles);
+    this.renderFilesList(pageItems, this.currentContainerId);
+    this.updatePaginationControls();
+  }
+
+  /**
+   * Paginate the current file list
+   */
+  paginateFiles(files) {
+    const start = (this.currentPage - 1) * this.itemsPerPage;
+    return files.slice(start, start + this.itemsPerPage);
+  }
+
+  /**
+   * Change current page
+   * @param {number} page
+   */
+  changePage(page) {
+    const totalPages = Math.max(
+      1,
+      Math.ceil(this.currentFiles.length / this.itemsPerPage),
+    );
+    if (page < 1 || page > totalPages) return;
+    this.currentPage = page;
+    this.renderCurrentPage();
+  }
+
+  /**
+   * Handle items per page selection
+   * @param {Event} e
+   */
+  handleItemsPerPageChange(e) {
+    const value = parseInt(e.target.value, 10);
+    if (value && value > 0) {
+      this.itemsPerPage = value;
+      const prefs = storage.getViewPreferences();
+      prefs.itemsPerPage = this.itemsPerPage;
+      storage.setViewPreferences(prefs);
+      this.currentPage = 1;
+      this.renderCurrentPage();
+    }
+  }
+
+  /**
+   * Update pagination UI
+   */
+  updatePaginationControls() {
+    const paginationContainer = document.getElementById("paginationContainer");
+    const prevBtn = document.getElementById("paginationPrevBtn");
+    const nextBtn = document.getElementById("paginationNextBtn");
+    const pageInfo = document.getElementById("paginationInfo");
+    const pageSelect = document.getElementById("itemsPerPageSelect");
+
+    if (
+      !paginationContainer ||
+      !prevBtn ||
+      !nextBtn ||
+      !pageInfo ||
+      !pageSelect
+    )
+      return;
+
+    const totalCount = this.currentFiles.length;
+    const totalPages = Math.max(1, Math.ceil(totalCount / this.itemsPerPage));
+
+    paginationContainer.style.display = totalCount > 0 ? "flex" : "none";
+    pageInfo.textContent = `Trang ${this.currentPage} / ${totalPages} • Tổng ${totalCount} file`;
+    prevBtn.disabled = this.currentPage <= 1;
+    nextBtn.disabled = this.currentPage >= totalPages;
+    pageSelect.value = String(this.itemsPerPage);
+  }
+
+  /**
+   * Handle reviewed filter
+   */
+  handleReviewedFilter() {
+    this.applyFiltersAndSort();
+  }
+
+  /**
+   * Toggle completed/read state
+   * @param {string} filePath
+   * @param {HTMLElement} btn
+   */
+  toggleCompleted(filePath, btn) {
+    if (storage.isCompletedFile(filePath)) {
+      storage.removeCompletedFile(filePath);
+      btn.classList.remove("active");
+      btn.innerHTML = '<i class="bi bi-eye"></i> <span>Chưa xem</span>';
+    } else {
+      storage.addCompletedFile(filePath);
+      btn.classList.add("active");
+      btn.innerHTML = '<i class="bi bi-eye-fill"></i> <span>Đã xem</span>';
+    }
+
+    this.updateFavoritesCount();
+    if (this.currentView === "favorites") {
+      this.refreshFavoritesList();
+    } else if (this.currentView === "reviewed") {
+      this.refreshReviewedList();
+    } else {
+      this.applyFiltersAndSort();
+    }
   }
 
   /**
@@ -634,7 +849,7 @@ class PDFManagerApp {
     }
 
     const results = explorer.searchFiles(query);
-    this.renderFilesList(results);
+    this.renderFileCollection(results, "filesList");
   }
 
   /**
