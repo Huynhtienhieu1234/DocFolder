@@ -399,18 +399,26 @@ class PDFManagerApp {
     filesList.innerHTML = files
       .map((file, index) => {
         const isFav = storage.isFavorite(file.path);
+        const isCompleted = storage.isCompletedFile(file.path);
         const thumbnail = storage.getThumbnail(file.path);
         const fileSize = ExplorerManager.formatFileSize(file.size);
         const modifiedDate = ExplorerManager.formatDate(file.lastModified);
 
         return `
-                <div class="file-card" data-path="${file.path}" data-index="${index}">
+                <div class="file-card ${isCompleted ? "completed" : ""}" data-path="${file.path}" data-index="${index}">
                     <div class="file-thumbnail ${thumbnail ? "has-image" : ""}" 
                          style="${thumbnail ? `background-image: url('${thumbnail}')` : ""}">
                         <div class="favorite-btn ${isFav ? "active" : ""}" 
                              onclick="event.stopPropagation(); app.toggleFavorite('${file.path.replace(/'/g, "\\'")}', this)">
                             <i class="bi bi-star${isFav ? "-fill" : ""}"></i>
                         </div>
+                        <button class="completed-btn ${isCompleted ? "active" : ""}"
+                                type="button"
+                                title="${isCompleted ? "Bỏ đánh dấu đã xem xong" : "Đánh dấu đã xem xong"}"
+                                onclick="event.stopPropagation(); app.toggleCompleted('${file.path.replace(/'/g, "\\'")}', this)">
+                            <i class="bi bi-check2-circle"></i>
+                            <span>${isCompleted ? "Đã xem" : "Xem xong"}</span>
+                        </button>
                         ${!thumbnail ? '<div class="file-thumbnail-placeholder"><i class="bi bi-file-pdf"></i></div>' : ""}
                         <div class="file-badge">${file.pageCount || "?"} trang</div>
                     </div>
@@ -534,6 +542,29 @@ class PDFManagerApp {
 
     this.updateFavoritesCount();
     this.refreshFavoritesList();
+  }
+
+  /**
+   * Toggle completed/read mark
+   * @param {string} filePath
+   * @param {HTMLElement} btn
+   */
+  toggleCompleted(filePath, btn) {
+    const card = btn.closest(".file-card");
+
+    if (storage.isCompletedFile(filePath)) {
+      storage.removeCompletedFile(filePath);
+      btn.classList.remove("active");
+      btn.title = "Đánh dấu đã xem xong";
+      btn.innerHTML = '<i class="bi bi-check2-circle"></i><span>Xem xong</span>';
+      card?.classList.remove("completed");
+    } else {
+      storage.addCompletedFile(filePath);
+      btn.classList.add("active");
+      btn.title = "Bỏ đánh dấu đã xem xong";
+      btn.innerHTML = '<i class="bi bi-check2-circle"></i><span>Đã xem</span>';
+      card?.classList.add("completed");
+    }
   }
 
   /**

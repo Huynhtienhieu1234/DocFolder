@@ -149,6 +149,54 @@ class StorageManager {
   }
 
   /**
+   * Get completed/read files list
+   * @returns {Array}
+   */
+  getCompletedFiles() {
+    return this.getItem("completedFiles", []);
+  }
+
+  /**
+   * Set completed/read files list
+   * @param {Array} completedFiles
+   */
+  setCompletedFiles(completedFiles) {
+    this.setItem("completedFiles", completedFiles);
+  }
+
+  /**
+   * Mark file as completed/read
+   * @param {string} filePath
+   */
+  addCompletedFile(filePath) {
+    const completedFiles = this.getCompletedFiles();
+    if (!completedFiles.includes(filePath)) {
+      completedFiles.push(filePath);
+      this.setCompletedFiles(completedFiles);
+    }
+  }
+
+  /**
+   * Remove completed/read mark
+   * @param {string} filePath
+   */
+  removeCompletedFile(filePath) {
+    let completedFiles = this.getCompletedFiles();
+    completedFiles = completedFiles.filter((f) => f !== filePath);
+    this.setCompletedFiles(completedFiles);
+  }
+
+  /**
+   * Check if file is completed/read
+   * @param {string} filePath
+   * @returns {boolean}
+   */
+  isCompletedFile(filePath) {
+    const completedFiles = this.getCompletedFiles();
+    return completedFiles.includes(filePath);
+  }
+
+  /**
    * Get sort preference
    * @returns {string}
    */
